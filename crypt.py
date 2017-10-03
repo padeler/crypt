@@ -1,5 +1,13 @@
 """crypt
 
+Create, view and maintain a hashtable db.
+The hashtable dumped to a json string and is stored encrypted.
+
+Encryption/decryption is done using the Fernet symmetric encryption spec.
+https://github.com/fernet/spec/blob/master/Spec.md
+
+Depends on the "cryptography" python package.
+
 Usage:
     crypt.py create [-d filename.db]
     crypt.py insert [-d filename.db] [-g len] key [values...]
@@ -46,10 +54,8 @@ def _gen_key(password, salt=os.urandom(SALT_LEN)):
                      iterations=100000,
                      backend=default_backend())
     key = base64.urlsafe_b64encode(kdf.derive(password))
-
     # print("Key %d %s" %(len(key), key))
     # print("Salt %d %s" %(len(salt), salt))
-
     return key, salt
 
 
@@ -234,8 +240,8 @@ if __name__ == '__main__':
         parser.print_help()
         exit(0)
 
-    print "Options: ", options
-    print "Args: ", args
+    # print "Options: ", options
+    # print "Args: ", args
 
     cmd = commands.get(args[0])
 
@@ -248,7 +254,6 @@ if __name__ == '__main__':
         cmd(args[1:], options)
     except Exception as e:
         print("Error: %s" % e.message)
-        import traceback
-        traceback.print_exc(e)
-
+        # import traceback
+        # traceback.print_exc(e)
         exit(2)
