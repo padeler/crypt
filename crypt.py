@@ -1,3 +1,5 @@
+#!/usr/bin/python27
+
 """crypt
 
 Create, view and maintain a hashtable db.
