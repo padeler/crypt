@@ -93,11 +93,11 @@ def _load_db(password, filename):
     db_dict = json.loads(db_json)
     return db_dict
 
+
 from cmd import Cmd
 
 
 class CryptShell(Cmd):
-
     def do_open(self, args):
         """
         Open a db, load everything in memory.
@@ -122,7 +122,7 @@ class CryptShell(Cmd):
 
         self.db_dict = db_dict
         self.password = password
-        self.prompt = "Crypt ["+filename+"] >>> "
+        self.prompt = "Crypt [" + filename + "] >>> "
         return None
 
     def do_list(self, args):
@@ -157,7 +157,6 @@ class CryptShell(Cmd):
         value = ''.join(random.choice(chars) for i in range(length))
         print("Generated value (length=%d): %s" % (length, value))
         return value
-
 
     def do_append(self, args):
         """
@@ -198,7 +197,6 @@ class CryptShell(Cmd):
         print("Updated key \"{}\" to db \"{}\"".format(key, self.options.db))
         return None
 
-
     def do_password(self, args):
         """
         Change the password of the loaded database
@@ -209,7 +207,7 @@ class CryptShell(Cmd):
 
         print("Changing password for database %s" % self.options.db)
         oldpassword = getpass.getpass("Enter old password: ")
-        if oldpassword!=self.password:
+        if oldpassword != self.password:
             print("Wrong password. Aborting.")
 
         password = getpass.getpass("Enter new password: ")
@@ -256,7 +254,6 @@ class CryptShell(Cmd):
         _write_db(self.password, self.db_dict, self.options.db)
         return None
 
-
     def do_delete(self, args):
         """
         Delete a key (and its values).
@@ -273,7 +270,6 @@ class CryptShell(Cmd):
         print("Deleted key \"{}\" from db \"{}\"".format(key, self.options.db))
         return None
 
-
     def do_insert(self, args):
         """
         Insert a key and one or more values.
@@ -284,7 +280,6 @@ class CryptShell(Cmd):
         if self.db_dict.get(key) is not None:
             print("Key \"%s\" already exists. Use update to overwrite" % key)
             return False
-
 
         values = [str(v) for v in args[1:]]
 
@@ -321,7 +316,7 @@ if __name__ == '__main__':
         cshell.options = cl_opts
         cshell.do_open(cl_opts.db)
 
-        cshell.cmdloop("Crypt shell "+VERSION)
+        cshell.cmdloop("Crypt shell " + VERSION)
 
     except Exception as e:
         print("Error: %s" % e.message)
