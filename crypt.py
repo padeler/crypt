@@ -2,8 +2,7 @@
 
 """crypt
 
-Create, view and maintain a hashtable db.
-The hashtable dumped to a json string and is stored encrypted.
+Create, view and maintain an encrypted db of key=value(s) pairs.
 
 Encryption/decryption is done using the Fernet symmetric encryption spec.
 https://github.com/fernet/spec/blob/master/Spec.md
@@ -11,18 +10,11 @@ https://github.com/fernet/spec/blob/master/Spec.md
 Depends on the "cryptography" python package.
 
 Usage:
-    crypt.py create [-d filename.db]
-    crypt.py insert [-d filename.db] [-g len] key [values...]
-    crypt.py update [-d filename.db] [-g len] key [values...]
-    crypt.py append [-d filename.db] [-g len] key [values...]
-    crypt.py delete [-d filename.db] key
-    crypt.py select [-d filename.db] [key...]
+    crypt.py [-d filename.db]
 
 Options:
  -h, --help  show this
- -d filename.db | --db=filename.db   database file name. If omitted, default is crypt.db
- -g          generate random alphanumeric string as value
-
+ -d filename.db database file name. If omitted, default is crypt.db
 """
 import base64
 import datetime
@@ -43,9 +35,8 @@ SALT_LEN = 16
 
 
 def create_parser():
-    parser = OptionParser("usage: %prog <create|insert|update|append|delete|select> [options] values...")
+    parser = OptionParser("usage: %prog [options]")
     parser.add_option("-d", dest="db", metavar="file.db", help="Database file. Default is crypt.db", default="crypt.db")
-    parser.add_option("-g", metavar="length", type="int", dest="generate_value", help="Auto-generate value of given length")
     return parser
 
 
@@ -102,160 +93,238 @@ def _load_db(password, filename):
     db_dict = json.loads(db_json)
     return db_dict
 
-
-def _open(filename):
-    if not os.path.isfile(options.db):
-        raise Exception("Database file %s does not exist." % options.db)
-
-    password = getpass.getpass("Password:")
-    db_dict = _load_db(password, filename)
-    print("Opened db file %s version %s" % (filename, db_dict["version"]))
-    print("Created on %s" % db_dict["created"])
-    print("Modified on %s" % db_dict["modified"])
-
-    return db_dict, password
+from cmd import Cmd
 
 
-def create(args, options):
-    if os.path.isfile(options.db):
-        raise Exception("Database file %s already exists. Will not overwrite." % options.db)
+class CryptShell(Cmd):
 
-    password = getpass.getpass("Enter new password:")
-    password2 = getpass.getpass("Re-enter password:")
+    def do_open(self, args):
+        """
+        Open a db, load everything in memory.
+        :param args: The db filename
+        """
+        args = args.split()
+        self.options.db = args[0]
+        self.prompt = "Crypt [] >>> "
 
-    if password != password2:
-        print("Passwords do not match.")
-        return
+        if not os.path.exists(self.options.db):
+            print("Database file %s does not exist." % self.options.db)
+            if not self.do_create(args):
+                return False
 
-    ts = datetime.datetime.now()
-    db_dict = {
-        "created": str(ts),
-        "version": VERSION,
-    }
+        print("Opening database %s" % self.options.db)
+        filename = self.options.db
+        password = getpass.getpass("Password: ")
+        db_dict = _load_db(password, filename)
+        print("Opened db file %s, DB version string is \"%s\"" % (filename, db_dict["version"]))
+        print("Created on %s" % db_dict["created"])
+        print("Modified on %s" % db_dict["modified"])
 
-    print("Creating new db file %s" % (options.db,))
-    _write_db(password, db_dict, options.db)
-    pass
+        self.db_dict = db_dict
+        self.password = password
+        self.prompt = "Crypt ["+filename+"] >>> "
+        return None
 
+    def do_list(self, args):
+        """
+        List a key or keys to display. No arguments will print the entire db.
+        :param key(s):
+        """
+        keys = args.split()
 
-def delete(args, options):
-    db_dict, password = _open(options.db)
-    key = args[0]
-    if db_dict.get(key) is None:
-        raise Exception("Key \"%s\" does not exist.")
+        if len(keys) == 0:
+            keys = self.db_dict.keys()
+        for k in keys:
+            values = self.db_dict.get(k)
+            if values is not None and type(values) is list:
+                print("Key \"%s\"" % k)
+                for v in values:
+                    print("\t%s" % v)
 
-    db_dict.pop(key)
-    _write_db(password, db_dict, options.db)
-    print("Deleted key \"{}\" from db \"{}\"".format(key, options.db))
-    pass
+        return None
 
+    def do_generate(self, args):
+        """
+        Generate a random alphanumeric string of given length
+        :param length: length of generated string
+        """
+        args = args.split()
+        if len(args) > 0:
+            length = int(args[0])
 
-def _generate_value(length=20):
-    chars = string.ascii_letters + string.digits + "!@#$%&"
-    random.seed(os.urandom(1024))
-    value = ''.join(random.choice(chars) for i in range(length))
-    print("Generated value (length=%d): %s" % (length, value))
-    return value
-
-
-def insert(args, options):
-    db_dict, password = _open(options.db)
-    key = args[0]
-    if db_dict.get(key) is not None:
-        raise Exception("Key \"%s\" already exists. Use update to overwrite" % key)
-
-    values = []
-    if options.generate_value:
-        values.append(_generate_value(options.generate_value))
-
-    values += [str(v) for v in args[1:]]
-
-    if len(values)==0:
-        raise Exception("No values for key %s. This is pointless, i give up." % key)
-
-    db_dict[key] = values
-    _write_db(password, db_dict, options.db)
-    print("Added new key \"{}\" to db \"{}\"".format(key, options.db))
-
-
-def update(args, options):
-    db_dict, password = _open(options.db)
-    key = args[0]
-    if db_dict.get(key) is None:
-        raise Exception("Key \"%s\" does not exist. Use insert." % key)
-
-    values = []
-    if options.generate_value:
-        values.append(_generate_value(options.generate_value))
-
-    values += [str(v) for v in args[1:]]
-    if len(values)==0:
-        raise Exception("No values for key %s. This is pointless, i give up." % key)
-
-    db_dict[key] = values
-    _write_db(password, db_dict, options.db)
-    print("Updated key \"{}\" to db \"{}\"".format(key, options.db))
+        chars = string.ascii_letters + string.digits + "!@#$%&"
+        random.seed(os.urandom(1024))
+        value = ''.join(random.choice(chars) for i in range(length))
+        print("Generated value (length=%d): %s" % (length, value))
+        return value
 
 
-def append(args, options):
-    db_dict, password = _open(options.db)
-    key = args[0]
-    if db_dict.get(key) is None:
-        raise Exception("Key \"%s\" does not exist. Use insert." % key)
+    def do_append(self, args):
+        """
+        Append values to an existing key
+        :param args: extra values
+        """
+        args = args.split()
+        key = args[0]
+        if self.db_dict.get(key) is None:
+            print("Key \"%s\" does not exist. Use insert." % key)
+            return False
 
-    values = []
-    if options.generate_value:
-        values.append(_generate_value(options.generate_value))
+        values = [str(v) for v in args[1:]]
 
-    values += [str(v) for v in args[1:]]
+        self.db_dict[key] += values
+        _write_db(self.password, self.db_dict, self.options.db)
+        print("Appended new values to existing list of key \"{}\" to db \"{}\"".format(key, self.options.db))
+        return None
 
-    db_dict[key] += values
-    _write_db(password, db_dict, options.db)
-    print("Appended new values to existing list of key \"{}\" to db \"{}\"".format(key, options.db))
+    def do_update(self, args):
+        """
+        Update the values of an existing key. Old values are deleted
+        :param args: new values
+        """
+        args = args.split()
+        key = args[0]
+        if self.db_dict.get(key) is None:
+            print("Key \"%s\" does not exist. Use insert." % key)
+            return False
+
+        values = [str(v) for v in args[1:]]
+        if len(values) == 0:
+            print("No values for key %s. This is pointless, i give up." % key)
+            return False
+
+        self.db_dict[key] = values
+        _write_db(self.password, self.db_dict, self.options.db)
+        print("Updated key \"{}\" to db \"{}\"".format(key, self.options.db))
+        return None
 
 
-def select(args, options):
-    db_dict, password = _open(options.db)
-    keys = args
-    if len(keys) == 0:
-        keys = db_dict.keys()
-    for k in keys:
-        values = db_dict.get(k)
-        if values is not None and type(values) is list:
-            print("Key \"%s\"" % k)
-            for v in values:
-                print("\t%s" % v)
+    def do_password(self, args):
+        """
+        Change the password of the loaded database
+        """
+        if not os.path.exists(self.options.db) or self.db_dict is None or self.password is None:
+            print("No database loaded. Aborting.")
+            return False
+
+        print("Changing password for database %s" % self.options.db)
+        oldpassword = getpass.getpass("Enter old password: ")
+        if oldpassword!=self.password:
+            print("Wrong password. Aborting.")
+
+        password = getpass.getpass("Enter new password: ")
+        password2 = getpass.getpass("Re-enter password: ")
+
+        if password != password2:
+            print("Passwords do not match.")
+            return False
+
+        self.password = password
+        _write_db(self.password, self.db_dict, self.options.db)
+        print("Password changed.")
+
+    def do_create(self, args):
+        """
+        Create a new database. It will prompt for new password.
+        The current db loaded is discarded. The file of the current db is not altered.
+
+        :param filename: The filename for the new db
+        """
+        args = args.split()
+        self.options.db = args[0]
+
+        if os.path.exists(self.options.db):
+            print("Database file %s already exists. Will not overwrite." % self.options.db)
+            return False
+
+        print("Creating database %s" % self.options.db)
+        password = getpass.getpass("Enter new password: ")
+        password2 = getpass.getpass("Re-enter password: ")
+
+        if password != password2:
+            print("Passwords do not match.")
+            return False
+
+        ts = datetime.datetime.now()
+        self.password = password
+        self.db_dict = {
+            "created": str(ts),
+            "version": VERSION,
+        }
+
+        print("Creating new db file %s" % (self.options.db,))
+        _write_db(self.password, self.db_dict, self.options.db)
+        return None
 
 
-commands = {"create": create,
-            "insert": insert,
-            "select": select,
-            "update": update,
-            "append": append,
-            "delete": delete,
-            }
+    def do_delete(self, args):
+        """
+        Delete a key (and its values).
+        :param key: the key to delete
+        """
+        args = args.split()
+        key = args[0]
+        if self.db_dict.get(key) is None:
+            print("Key \"%s\" does not exist.")
+            return False
+
+        self.db_dict.pop(key)
+        _write_db(self.password, self.db_dict, self.options.db)
+        print("Deleted key \"{}\" from db \"{}\"".format(key, self.options.db))
+        return None
+
+
+    def do_insert(self, args):
+        """
+        Insert a key and one or more values.
+        :param key [value1] [value2] ...: key and values
+        """
+        args = args.split()
+        key = args[0]
+        if self.db_dict.get(key) is not None:
+            print("Key \"%s\" already exists. Use update to overwrite" % key)
+            return False
+
+
+        values = [str(v) for v in args[1:]]
+
+        if len(values) == 0:
+            print("No values for key %s. This is pointless, i give up." % key)
+            return False
+
+        self.db_dict[key] = values
+        _write_db(self.password, self.db_dict, self.options.db)
+        print("Added new key \"{}\" to db \"{}\"".format(key, self.options.db))
+        return None
+
+    def do_quit(self, args):
+        """Quit crypt."""
+        raise SystemExit
+
+    def emptyline(self):
+        pass
+
+    def default(self, line):
+        if line == "EOF":
+            print("\n")
+            self.do_quit(line)
+        else:
+            print("Bad command. Type \"?\" for help.")
+
 
 if __name__ == '__main__':
     parser = create_parser()
-    options, args = parser.parse_args()
-    if len(args) == 0:
-        parser.print_help()
-        exit(0)
-
-    # print "Options: ", options
-    # print "Args: ", args
-
-    cmd = commands.get(args[0])
-
-    if cmd is None:
-        print("Invalid command.")
-        parser.print_help()
-        exit(1)
+    cl_opts, args = parser.parse_args()
 
     try:
-        cmd(args[1:], options)
+        cshell = CryptShell()
+        cshell.options = cl_opts
+        cshell.do_open(cl_opts.db)
+
+        cshell.cmdloop("Crypt shell "+VERSION)
+
     except Exception as e:
         print("Error: %s" % e.message)
         # import traceback
         # traceback.print_exc(e)
-        exit(2)
+        exit(1)
