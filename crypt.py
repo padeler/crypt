@@ -149,6 +149,7 @@ class CryptShell(Cmd):
         :param length: length of generated string
         """
         args = args.split()
+        length = 32
         if len(args) > 0:
             length = int(args[0])
 
@@ -156,7 +157,7 @@ class CryptShell(Cmd):
         random.seed(os.urandom(1024))
         value = ''.join(random.choice(chars) for i in range(length))
         print("Generated value (length=%d): %s" % (length, value))
-        return value
+        return None 
 
     def do_append(self, args):
         """
