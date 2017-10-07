@@ -297,6 +297,26 @@ class CryptShell(Cmd):
         """Quit crypt."""
         raise SystemExit
 
+    def do_clear(self, args):
+        os.system('clear')
+
+    def _complete_key(self, text, line, beginidx, endidx):
+        res = []
+        if self.db_dict is not None:
+            res = [s for s in self.db_dict.keys() if text in s]
+        return res
+
+
+    def complete_list(self, text, line, beginidx, endidx):
+        return self._complete_key(text, line, beginidx, endidx) 
+    def complete_append(self, text, line, beginidx, endidx):
+        return self._complete_key(text, line, beginidx, endidx) 
+    def complete_delete(self, text, line, beginidx, endidx):
+        return self._complete_key(text, line, beginidx, endidx) 
+    def complete_update(self, text, line, beginidx, endidx):
+        return self._complete_key(text, line, beginidx, endidx) 
+        
+
     def emptyline(self):
         pass
 
