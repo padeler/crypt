@@ -109,7 +109,7 @@ class CryptShell(Cmd):
 
         if not os.path.exists(self.options.db):
             print("Database file %s does not exist." % self.options.db)
-            if not self.do_create(args):
+            if self.do_create(args) is False:
                 return False
 
         print("Opening database %s" % self.options.db)
@@ -229,8 +229,9 @@ class CryptShell(Cmd):
 
         :param filename: The filename for the new db
         """
-        args = args.split()
-        self.options.db = args[0]
+        if type(args) is str:
+            args = args.split()
+            self.options.db = args[0]
 
         if os.path.exists(self.options.db):
             print("Database file %s already exists. Will not overwrite." % self.options.db)
@@ -298,7 +299,7 @@ class CryptShell(Cmd):
         raise SystemExit
 
     def do_clear(self, args):
-        os.system('clear')
+        os.system('cls' if os.name == 'nt' else 'clear')
 
     def _complete_key(self, text, line, beginidx, endidx):
         res = []
@@ -332,15 +333,16 @@ if __name__ == '__main__':
     parser = create_parser()
     cl_opts, args = parser.parse_args()
 
-    try:
-        cshell = CryptShell()
-        cshell.options = cl_opts
-        cshell.do_open(cl_opts.db)
+    cshell = CryptShell()
+    cshell.options = cl_opts
 
-        cshell.cmdloop("Crypt shell " + VERSION)
+    try:
+        res = cshell.do_open(cl_opts.db)
+        if res is not False: # db opened succesfully
+            cshell.cmdloop("Crypt shell " + VERSION)
 
     except Exception as e:
         print("Error: %s" % e.message)
-        # import traceback
-        # traceback.print_exc(e)
+        import traceback
+        traceback.print_exc(e)
         exit(1)
