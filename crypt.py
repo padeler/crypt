@@ -95,7 +95,7 @@ def _load_db(password, filename):
 
 
 from cmd import Cmd
-
+import shlex
 
 class CryptShell(Cmd):
     def do_open(self, args):
@@ -103,7 +103,7 @@ class CryptShell(Cmd):
         Open a db, load everything in memory.
         :param args: The db filename
         """
-        args = args.split()
+        args = shlex.split(args)
         self.options.db = args[0]
         self.prompt = "Crypt [] >>> "
 
@@ -130,7 +130,7 @@ class CryptShell(Cmd):
         List a key or keys to display. No arguments will print the entire db.
         :param key(s):
         """
-        keys = args.split()
+        keys = shlex.split(args)
 
         if len(keys) == 0:
             keys = self.db_dict.keys()
@@ -148,7 +148,7 @@ class CryptShell(Cmd):
         Generate a random alphanumeric string of given length
         :param length: length of generated string
         """
-        args = args.split()
+        args = shlex.split(args)
         length = 32
         if len(args) > 0:
             length = int(args[0])
@@ -164,7 +164,7 @@ class CryptShell(Cmd):
         Append values to an existing key
         :param args: extra values
         """
-        args = args.split()
+        args = shlex.split(args)
         key = args[0]
         if self.db_dict.get(key) is None:
             print("Key \"%s\" does not exist. Use insert." % key)
@@ -182,7 +182,7 @@ class CryptShell(Cmd):
         Update the values of an existing key. Old values are deleted
         :param args: new values
         """
-        args = args.split()
+        args = shlex.split(args)
         key = args[0]
         if self.db_dict.get(key) is None:
             print("Key \"%s\" does not exist. Use insert." % key)
@@ -230,7 +230,7 @@ class CryptShell(Cmd):
         :param filename: The filename for the new db
         """
         if type(args) is str:
-            args = args.split()
+            args = shlex.split(args)
             self.options.db = args[0]
 
         if os.path.exists(self.options.db):
@@ -261,7 +261,7 @@ class CryptShell(Cmd):
         Delete a key (and its values).
         :param key: the key to delete
         """
-        args = args.split()
+        args = shlex.split(args)
         key = args[0]
         if self.db_dict.get(key) is None:
             print("Key \"%s\" does not exist.")
@@ -277,7 +277,7 @@ class CryptShell(Cmd):
         Insert a key and one or more values.
         :param key [value1] [value2] ...: key and values
         """
-        args = args.split()
+        args = shlex.split(args)
         key = args[0]
         if self.db_dict.get(key) is not None:
             print("Key \"%s\" already exists. Use update to overwrite" % key)
@@ -304,7 +304,7 @@ class CryptShell(Cmd):
     def _complete_key(self, text, line, beginidx, endidx):
         res = []
         if self.db_dict is not None:
-            res = [s for s in self.db_dict.keys() if text in s]
+            res = [s for s in self.db_dict.keys() if text in s and type(self.db_dict[s]) is list]
         return res
 
 
