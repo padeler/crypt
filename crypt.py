@@ -1,5 +1,3 @@
-#!/usr/bin/python2
-
 """crypt
 
 Create, view and maintain an encrypted db of key=value(s) pairs.
@@ -30,7 +28,8 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-VERSION = "crypt v0.1"
+
+VERSION = "crypt v0.2"
 SALT_LEN = 16
 
 
@@ -46,7 +45,7 @@ def _gen_key(password, salt=os.urandom(SALT_LEN)):
                      salt=salt,
                      iterations=100000,
                      backend=default_backend())
-    key = base64.urlsafe_b64encode(kdf.derive(password))
+    key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
     # print("Key %d %s" %(len(key), key))
     # print("Salt %d %s" %(len(salt), salt))
     return key, salt
@@ -60,18 +59,18 @@ def _write_db(password, db_dict, filename):
 
     # convert db_dict to json
     db_json = json.dumps(db_dict)
-
+    
     # encrypt with key and Fernet
     fernet = Fernet(key)
-    db_crypt = fernet.encrypt(db_json)
+    db_crypt = fernet.encrypt(db_json.encode())
 
-    with file(filename, "wb") as f:
+    with open(filename, "wb") as f:
         f.write(salt)
         f.write(db_crypt)
 
 
 def _load_db(password, filename):
-    with file(filename, "rb") as f:
+    with open(filename, "rb") as f:
         salt = f.read(SALT_LEN)  # read salt
         if len(salt) != SALT_LEN:
             raise Exception("Corrupted/invalid db file. Failed to read salt")
@@ -342,7 +341,7 @@ if __name__ == '__main__':
             cshell.cmdloop("Crypt shell " + VERSION)
 
     except Exception as e:
-        print("Error: %s" % e.message)
-        import traceback
-        traceback.print_exc(e)
+        print("Error: %s" % str(e))
+        # import traceback
+        # traceback.print_exc()
         exit(1)
