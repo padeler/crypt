@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 """crypt
 
 Create, view and maintain an encrypted db of key=value(s) pairs.
