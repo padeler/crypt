@@ -16,6 +16,7 @@ import json
 import os
 import string
 import random
+import sys
 
 from cmd import Cmd
 import shlex
@@ -110,9 +111,9 @@ class CryptShell(Cmd):
         filename = self.db_filename
         password = getpass.getpass("Password: ")
         db_dict = _load_db(password, filename)
-        print("Opened db file %s, DB version string is \"%s\"" % (filename, db_dict["version"]))
-        print("Created on %s" % db_dict["created"])
-        print("Modified on %s" % db_dict["modified"])
+        print("Opened db file %s, DB version string is \"%s\"" % (filename, db_dict.get("version", "N/A")))
+        print("Created on %s" % db_dict.get("created", "N/A"))
+        print("Modified on %s" % db_dict.get("modified", "N/A"))
 
         self.db_dict = db_dict
         self.password = password
@@ -131,7 +132,7 @@ class CryptShell(Cmd):
             keys = self.db_dict.keys()
         for k in keys:
             values = self.db_dict.get(k)
-            if values is not None and type(values) is list:
+            if values is not None:
                 print(f"{k}: {values}")
 
         return None
@@ -149,7 +150,7 @@ class CryptShell(Cmd):
         chars = string.ascii_letters + string.digits + "@#%&"
         random.seed(os.urandom(1024))
         value = ''.join(random.choice(chars) for i in range(length))
-        print(f"Generated value (length={length}): {value}" % (length, value))
+        print(f"Generated value (length={length}): {value}")
         return None
 
     def do_append(self, args):
@@ -199,7 +200,7 @@ class CryptShell(Cmd):
             print("No database loaded. Aborting.")
             return False
 
-        print("Changing password for database %s" % self.db_filename)
+        print(f"Changing password for database {self.db_filename}")
         oldpassword = getpass.getpass("Enter old password: ")
         if oldpassword != self.password:
             print("Wrong password. Aborting.")
@@ -227,10 +228,10 @@ class CryptShell(Cmd):
             self.db_filename = args[0]
 
         if os.path.exists(self.db_filename):
-            print("Database file %s already exists. Will not overwrite." % self.db_filename)
+            print(f"Database file {self.db_filename} already exists. Will not overwrite.")
             return False
 
-        print("Creating database %s" % self.db_filename)
+        print(f"Creating database {self.db_filename}")
         password = getpass.getpass("Enter new password: ")
         password2 = getpass.getpass("Re-enter password: ")
 
@@ -245,7 +246,7 @@ class CryptShell(Cmd):
             "version": VERSION,
         }
 
-        print("Creating new db file %s" % (self.db_filename,))
+        print(f"Creating new db file {self.db_filename}")
         _write_db(self.password, self.db_dict, self.db_filename)
         return None
 
@@ -256,13 +257,14 @@ class CryptShell(Cmd):
         """
         args = shlex.split(args)
         key = args[0]
-        if self.db_dict.get(key) is None:
-            print("Key \"%s\" does not exist.")
+        value = self.db_dict.get(key, None)
+        if value is None or not isinstance(value, list):
+            print(f"Key \"{key}\" does not exist.")
             return False
 
         self.db_dict.pop(key)
         _write_db(self.password, self.db_dict, self.db_filename)
-        print("Deleted key \"{}\" from db \"{}\"".format(key, self.db_filename))
+        print(f"Deleted key \"{key}\" from db \"{self.db_filename}\"")
         return None
 
     def do_insert(self, args):
@@ -300,10 +302,10 @@ class CryptShell(Cmd):
     def _complete_key(self, text, line, beginidx, endidx):
         res = []
         if self.db_dict is not None:
-            res = [s for s in self.db_dict.keys() if text in s and type(self.db_dict[s]) is list]
+            res = [s for s in self.db_dict.keys() if text in s and isinstance(self.db_dict[s], list)]
         return res
 
-
+    
     def complete_list(self, text, line, beginidx, endidx):
         return self._complete_key(text, line, beginidx, endidx) 
     def complete_append(self, text, line, beginidx, endidx):
@@ -344,7 +346,7 @@ def runner(db="crypt.db"):
         print(f"Error: {ex}")
         # import traceback
         # traceback.print_exc()
-        exit(1)
+        sys.exit(1)
 
 if __name__ == '__main__':
     run(runner)
