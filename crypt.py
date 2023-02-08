@@ -1,20 +1,14 @@
 #!/usr/bin/python3
 """crypt
-
 Create, view and maintain an encrypted db of key=value(s) pairs.
 
 Encryption/decryption is done using the Fernet symmetric encryption spec.
 https://github.com/fernet/spec/blob/master/Spec.md
 
 Depends on the "cryptography" python package.
-
-Usage:
-    crypt.py [-d filename.db]
-
-Options:
- -h, --help  show this
- -d filename.db database file name. If omitted, default is crypt.db
 """
+# pyright: reportShadowedImports=none
+# pyright: reportMissingDocstring=None
 import base64
 import datetime
 import getpass
@@ -22,23 +16,19 @@ import json
 import os
 import string
 import random
-from optparse import OptionParser
+
+from cmd import Cmd
+import shlex
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+from clize import run
 
-VERSION = "crypt v0.2"
+VERSION = "crypt v0.3"
 SALT_LEN = 16
-
-
-def create_parser():
-    parser = OptionParser("usage: %prog [options]")
-    parser.add_option("-d", dest="db", metavar="file.db", help="Database file. Default is crypt.db", default="crypt.db")
-    return parser
-
 
 def _gen_key(password, salt=os.urandom(SALT_LEN)):
     kdf = PBKDF2HMAC(algorithm=hashes.SHA256(),
@@ -60,7 +50,7 @@ def _write_db(password, db_dict, filename):
 
     # convert db_dict to json
     db_json = json.dumps(db_dict)
-    
+
     # encrypt with key and Fernet
     fernet = Fernet(key)
     db_crypt = fernet.encrypt(db_json.encode())
@@ -74,7 +64,7 @@ def _load_db(password, filename):
     with open(filename, "rb") as f:
         salt = f.read(SALT_LEN)  # read salt
         if len(salt) != SALT_LEN:
-            raise Exception("Corrupted/invalid db file. Failed to read salt")
+            raise IOError("Corrupted/invalid db file. Failed to read salt")
 
         db_crypt = f.read()  # read full db
 
@@ -85,35 +75,39 @@ def _load_db(password, filename):
         try:
             # decrypt
             db_json = fernet.decrypt(db_crypt)
-        except Exception as e:
+        except Exception as exc:
             # import traceback
             # traceback.print_exc(e)
-            raise Exception("Decrypt failed. Check your password.")
+            raise ValueError("Decrypt failed. Check your password.") from exc
 
     db_dict = json.loads(db_json)
     return db_dict
 
 
-from cmd import Cmd
-import shlex
-
 class CryptShell(Cmd):
+    """
+    Shell interface for the db operations
+    """
+    db_filename = None
+    password = None
+    db_dict = None
+
     def do_open(self, args):
         """
         Open a db, load everything in memory.
         :param args: The db filename
         """
         args = shlex.split(args)
-        self.options.db = args[0]
+        self.db_filename = args[0]
         self.prompt = "Crypt [] >>> "
 
-        if not os.path.exists(self.options.db):
-            print("Database file %s does not exist." % self.options.db)
+        if not os.path.exists(self.db_filename):
+            print(f"Database file {self.db_filename} does not exist.")
             if self.do_create(args) is False:
                 return False
 
-        print("Opening database %s" % self.options.db)
-        filename = self.options.db
+        print(f"Opening database {self.db_filename}")
+        filename = self.db_filename
         password = getpass.getpass("Password: ")
         db_dict = _load_db(password, filename)
         print("Opened db file %s, DB version string is \"%s\"" % (filename, db_dict["version"]))
@@ -128,6 +122,7 @@ class CryptShell(Cmd):
     def do_list(self, args):
         """
         List a key or keys to display. No arguments will print the entire db.
+
         :param key(s):
         """
         keys = shlex.split(args)
@@ -137,9 +132,7 @@ class CryptShell(Cmd):
         for k in keys:
             values = self.db_dict.get(k)
             if values is not None and type(values) is list:
-                print("Key \"%s\"" % k)
-                for v in values:
-                    print("\t%s" % v)
+                print(f"{k}: {values}")
 
         return None
 
@@ -153,11 +146,11 @@ class CryptShell(Cmd):
         if len(args) > 0:
             length = int(args[0])
 
-        chars = string.ascii_letters + string.digits + "!@#$%&"
+        chars = string.ascii_letters + string.digits + "@#%&"
         random.seed(os.urandom(1024))
         value = ''.join(random.choice(chars) for i in range(length))
-        print("Generated value (length=%d): %s" % (length, value))
-        return None 
+        print(f"Generated value (length={length}): {value}" % (length, value))
+        return None
 
     def do_append(self, args):
         """
@@ -167,14 +160,14 @@ class CryptShell(Cmd):
         args = shlex.split(args)
         key = args[0]
         if self.db_dict.get(key) is None:
-            print("Key \"%s\" does not exist. Use insert." % key)
+            print(f"Key \"{key}\" does not exist. Use insert.")
             return False
 
         values = [str(v) for v in args[1:]]
 
         self.db_dict[key] += values
-        _write_db(self.password, self.db_dict, self.options.db)
-        print("Appended new values to existing list of key \"{}\" to db \"{}\"".format(key, self.options.db))
+        _write_db(self.password, self.db_dict, self.db_filename)
+        print(f"Appended new values to existing list of key \"{key}\" to db \"{self.db_filename}\"")
         return None
 
     def do_update(self, args):
@@ -185,28 +178,28 @@ class CryptShell(Cmd):
         args = shlex.split(args)
         key = args[0]
         if self.db_dict.get(key) is None:
-            print("Key \"%s\" does not exist. Use insert." % key)
+            print(f"Key \"{key}\" does not exist. Use insert.")
             return False
 
         values = [str(v) for v in args[1:]]
         if len(values) == 0:
-            print("No values for key %s. This is pointless, i give up." % key)
+            print(f"No values for key {key}. This is pointless, i give up.")
             return False
 
         self.db_dict[key] = values
-        _write_db(self.password, self.db_dict, self.options.db)
-        print("Updated key \"{}\" to db \"{}\"".format(key, self.options.db))
+        _write_db(self.password, self.db_dict, self.db_filename)
+        print(f"Updated key \"{key}\" to db \"{self.db_filename}\"")
         return None
 
     def do_password(self, args):
         """
         Change the password of the loaded database
         """
-        if not os.path.exists(self.options.db) or self.db_dict is None or self.password is None:
+        if not os.path.exists(self.db_filename) or self.db_dict is None or self.password is None:
             print("No database loaded. Aborting.")
             return False
 
-        print("Changing password for database %s" % self.options.db)
+        print("Changing password for database %s" % self.db_filename)
         oldpassword = getpass.getpass("Enter old password: ")
         if oldpassword != self.password:
             print("Wrong password. Aborting.")
@@ -219,7 +212,7 @@ class CryptShell(Cmd):
             return False
 
         self.password = password
-        _write_db(self.password, self.db_dict, self.options.db)
+        _write_db(self.password, self.db_dict, self.db_filename)
         print("Password changed.")
 
     def do_create(self, args):
@@ -231,13 +224,13 @@ class CryptShell(Cmd):
         """
         if type(args) is str:
             args = shlex.split(args)
-            self.options.db = args[0]
+            self.db_filename = args[0]
 
-        if os.path.exists(self.options.db):
-            print("Database file %s already exists. Will not overwrite." % self.options.db)
+        if os.path.exists(self.db_filename):
+            print("Database file %s already exists. Will not overwrite." % self.db_filename)
             return False
 
-        print("Creating database %s" % self.options.db)
+        print("Creating database %s" % self.db_filename)
         password = getpass.getpass("Enter new password: ")
         password2 = getpass.getpass("Re-enter password: ")
 
@@ -252,8 +245,8 @@ class CryptShell(Cmd):
             "version": VERSION,
         }
 
-        print("Creating new db file %s" % (self.options.db,))
-        _write_db(self.password, self.db_dict, self.options.db)
+        print("Creating new db file %s" % (self.db_filename,))
+        _write_db(self.password, self.db_dict, self.db_filename)
         return None
 
     def do_delete(self, args):
@@ -268,8 +261,8 @@ class CryptShell(Cmd):
             return False
 
         self.db_dict.pop(key)
-        _write_db(self.password, self.db_dict, self.options.db)
-        print("Deleted key \"{}\" from db \"{}\"".format(key, self.options.db))
+        _write_db(self.password, self.db_dict, self.db_filename)
+        print("Deleted key \"{}\" from db \"{}\"".format(key, self.db_filename))
         return None
 
     def do_insert(self, args):
@@ -280,18 +273,18 @@ class CryptShell(Cmd):
         args = shlex.split(args)
         key = args[0]
         if self.db_dict.get(key) is not None:
-            print("Key \"%s\" already exists. Use update to overwrite" % key)
+            print(f"Key \"{key}\" already exists. Use update to overwrite")
             return False
 
         values = [str(v) for v in args[1:]]
 
         if len(values) == 0:
-            print("No values for key %s. This is pointless, i give up." % key)
+            print(f"No values for key {key}. This is pointless, i give up.")
             return False
 
         self.db_dict[key] = values
-        _write_db(self.password, self.db_dict, self.options.db)
-        print("Added new key \"{}\" to db \"{}\"".format(key, self.options.db))
+        _write_db(self.password, self.db_dict, self.db_filename)
+        print(f"Added new key \"{key}\" to db \"{self.db_filename}\"")
         return None
 
     def do_quit(self, args):
@@ -299,6 +292,9 @@ class CryptShell(Cmd):
         raise SystemExit
 
     def do_clear(self, args):
+        """
+        Clear screen
+        """
         os.system('cls' if os.name == 'nt' else 'clear')
 
     def _complete_key(self, text, line, beginidx, endidx):
@@ -329,20 +325,26 @@ class CryptShell(Cmd):
             print("Bad command. Type \"?\" for help.")
 
 
-if __name__ == '__main__':
-    parser = create_parser()
-    cl_opts, args = parser.parse_args()
+def runner(db="crypt.db"):
+    """
+    Create, view and maintain an encrypted db of key=value(s) pairs.
+    
+    :param db: Database file.
+    
+    """
 
     cshell = CryptShell()
-    cshell.options = cl_opts
 
     try:
-        res = cshell.do_open(cl_opts.db)
+        res = cshell.do_open(db)
         if res is not False: # db opened succesfully
             cshell.cmdloop("Crypt shell " + VERSION)
 
-    except Exception as e:
-        print("Error: %s" % str(e))
+    except Exception as ex:
+        print(f"Error: {ex}")
         # import traceback
         # traceback.print_exc()
         exit(1)
+
+if __name__ == '__main__':
+    run(runner)
