@@ -9,6 +9,7 @@ Depends on the "cryptography" python package.
 """
 # pyright: reportShadowedImports=none
 # pyright: reportMissingDocstring=None
+from typing import Dict, List, Tuple, Optional, Any, Union
 import base64
 import datetime
 import getpass
@@ -30,22 +31,45 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from clize import run
 
-VERSION = "crypt v0.4"
+VERSION = "crypt v0.5"
 SALT_LEN = 16
 
-def _gen_key(password, salt=os.urandom(SALT_LEN)):
+
+def _gen_key(password: str, salt: bytes = None) -> Tuple[bytes, bytes]:
+    """
+    Generate a key from a password and salt using PBKDF2.
+
+    Args:
+        password: The password to derive the key from
+        salt: Optional salt bytes. If None, generates random salt.
+
+    Returns:
+        Tuple of (key, salt) where key is the derived key and salt is the salt used
+    """
+    if salt is None:
+        salt = os.urandom(SALT_LEN)
+
     kdf = PBKDF2HMAC(algorithm=hashes.SHA256(),
                      length=32,
                      salt=salt,
                      iterations=100000,
                      backend=default_backend())
     key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
-    # print("Key %d %s" %(len(key), key))
-    # print("Salt %d %s" %(len(salt), salt))
     return key, salt
 
 
-def _write_db(password, db_dict, filename):
+def _write_db(password: str, db_dict: Dict[str, Any], filename: str) -> None:
+    """
+    Write an encrypted database to a file.
+
+    Args:
+        password: The password to encrypt the database with
+        db_dict: The database dictionary to encrypt
+        filename: The file to write the encrypted database to
+
+    Raises:
+        IOError: If the file cannot be written to
+    """
     key, salt = _gen_key(password)
 
     ts = datetime.datetime.now()
@@ -70,7 +94,21 @@ def _write_db(password, db_dict, filename):
             raise IOError(f"Cannot write to {filename}. File is locked by another process.")
 
 
-def _load_db(password, filename):
+def _load_db(password: str, filename: str) -> Dict[str, Any]:
+    """
+    Load and decrypt a database from a file.
+
+    Args:
+        password: The password to decrypt the database with
+        filename: The file to read the encrypted database from
+
+    Returns:
+        The decrypted database dictionary
+
+    Raises:
+        IOError: If the file cannot be read or is corrupted
+        ValueError: If the password is incorrect
+    """
     with open(filename, "rb") as f:
         # Acquire a shared lock for reading
         try:
@@ -93,8 +131,6 @@ def _load_db(password, filename):
             # decrypt
             db_json = fernet.decrypt(db_crypt)
         except Exception as exc:
-            # import traceback
-            # traceback.print_exc(e)
             raise ValueError("Decrypt failed. Check your password.") from exc
 
     db_dict = json.loads(db_json)
@@ -105,82 +141,143 @@ class CryptShell(Cmd):
     """
     Shell interface for the db operations
     """
-    db_filename = None
-    password = None
-    db_dict = None
 
-    def do_open(self, args):
+    def __init__(self) -> None:
+        """Initialize the CryptShell with empty database attributes."""
+        super().__init__()
+        self.db_filename: Optional[str] = None
+        self.password: Optional[str] = None
+        self.db_dict: Optional[Dict[str, Any]] = None
+
+    def do_open(self, args: str) -> Optional[bool]:
         """
         Open a db, load everything in memory.
-        :param args: The db filename
-        """
-        args = shlex.split(args)
-        self.db_filename = args[0]
-        self.prompt = "Crypt [] >>> "
 
-        if not os.path.exists(self.db_filename):
-            print(f"Database file {self.db_filename} does not exist.")
-            if self.do_create(args) is False:
+        Args:
+            args: The db filename as a string
+
+        Returns:
+            None on success, False on failure
+        """
+        try:
+            args_list = shlex.split(args)
+            if not args_list:
+                print("Error: Missing database filename")
                 return False
 
-        print(f"Opening database {self.db_filename}")
-        filename = self.db_filename
-        password = getpass.getpass("Password: ")
-        db_dict = _load_db(password, filename)
-        print("Opened db file %s, DB version string is \"%s\"" % (filename, db_dict.get("version", "N/A")))
-        print("Created on %s" % db_dict.get("created", "N/A"))
-        print("Modified on %s" % db_dict.get("modified", "N/A"))
+            self.db_filename = args_list[0]
+            self.prompt = "Crypt [] >>> "
 
-        self.db_dict = db_dict
-        self.password = password
-        self.prompt = "Crypt [" + filename + "] >>> "
-        return None
+            if not os.path.exists(self.db_filename):
+                print(f"Database file {self.db_filename} does not exist.")
+                if self.do_create(args_list) is False:
+                    return False
 
-    def do_list(self, args):
+            print(f"Opening database {self.db_filename}")
+            filename = self.db_filename
+            password = getpass.getpass("Password: ")
+            db_dict = _load_db(password, filename)
+            print(
+                f"Opened db file {filename}, DB version string is \"{db_dict.get('version', 'N/A')}\""
+            )
+            print(f"Created on {db_dict.get('created', 'N/A')}")
+            print(f"Modified on {db_dict.get('modified', 'N/A')}")
+
+            self.db_dict = db_dict
+            self.password = password
+            self.prompt = f"Crypt [{filename}] >>> "
+            return None
+        except IndexError:
+            print("Error: Invalid arguments")
+            return False
+
+    def do_list(self, args: str) -> None:
         """
         List a key or keys to display. No arguments will print the entire db.
 
-        :param key(s):
-        """
-        keys = shlex.split(args)
+        Args:
+            args: Space-separated list of keys to display, or empty to show all
 
-        if len(keys) == 0:
-            keys = self.db_dict.keys()
+        Returns:
+            None
+        """
+        if self.db_dict is None:
+            print("No database loaded. Use 'open' first.")
+            return
+
+        keys = shlex.split(args) if args else []
+
+        if not keys:
+            keys = list(self.db_dict.keys())
+
         for k in keys:
             values = self.db_dict.get(k)
             if values is not None:
                 print(f"{k}: {values}")
+            else:
+                print(f'Key "{k}" not found.')
 
         return None
 
-    def do_generate(self, args):
+    def do_generate(self, args: str) -> None:
         """
-        Generate a random alphanumeric string of given length
-        :param length: length of generated string
+        Generate a random alphanumeric string of given length.
+
+        Args:
+            args: Length of the string to generate (optional, defaults to 32)
+
+        Returns:
+            None
         """
-        args = shlex.split(args)
-        length = 32
-        if len(args) > 0:
-            length = int(args[0])
+        args_list = shlex.split(args) if args else []
+        length = 32  # Default length
+
+        if args_list:
+            try:
+                length = int(args_list[0])
+                if length <= 0:
+                    raise ValueError()
+            except ValueError:
+                print(f"Invalid length '{args_list[0]}'. Using default length of 32.")
+                length = 32
 
         chars = string.ascii_letters + string.digits + "@#%&"
         random.seed(os.urandom(1024))
         value = ''.join(random.choice(chars) for i in range(length))
+
         print(f"Generated value (length={length}): {value}")
         return None
 
-    def do_append(self, args):
+    def do_append(self, args: str) -> Optional[bool]:
         """
-        Append values to an existing key
-        :param args: extra values
+        Append values to an existing key.
+
+        Args:
+            args: Key and values to append in the format "key value1 value2..."
+
+        Returns:
+            None on success, False on failure
         """
-        args = shlex.split(args)
-        key = args[0]
+        if self.db_dict is None or self.password is None:
+            print("No database loaded. Use 'open' first.")
+            return False
+
+        args_list = shlex.split(args) if args else []
+
+        if not args_list:
+            print("Error: Missing key")
+            return False
+
+        key = args_list[0]
         if self.db_dict.get(key) is None:
             print(f"Key \"{key}\" does not exist. Use insert.")
             return False
 
-        values = [str(v) for v in args[1:]]
+        values = [str(v) for v in args_list[1:]]
+
+        if not values:
+            print("Error: No values provided to append")
+            return False
 
         self.db_dict[key] += values
         _write_db(self.password, self.db_dict, self.db_filename)
@@ -326,7 +423,6 @@ class CryptShell(Cmd):
             res = [s for s in self.db_dict.keys() if text in s and isinstance(self.db_dict[s], list)]
         return res
 
-    
     def complete_list(self, text, line, beginidx, endidx):
         return self._complete_key(text, line, beginidx, endidx) 
     def complete_append(self, text, line, beginidx, endidx):
@@ -334,8 +430,7 @@ class CryptShell(Cmd):
     def complete_delete(self, text, line, beginidx, endidx):
         return self._complete_key(text, line, beginidx, endidx) 
     def complete_update(self, text, line, beginidx, endidx):
-        return self._complete_key(text, line, beginidx, endidx) 
-        
+        return self._complete_key(text, line, beginidx, endidx)
 
     def emptyline(self):
         pass
@@ -348,20 +443,25 @@ class CryptShell(Cmd):
             print("Bad command. Type \"?\" for help.")
 
 
-def runner(db="crypt.db"):
+def runner(db: str = "crypt.db") -> None:
     """
     Create, view and maintain an encrypted db of key=value(s) pairs.
-    
-    :param db: Database file.
-    
-    """
 
+    Args:
+        db: Database file path
+
+    Returns:
+        None
+
+    Exits:
+        With status code 1 on error
+    """
     cshell = CryptShell()
 
     try:
         res = cshell.do_open(db)
         if res is not False: # db opened succesfully
-            cshell.cmdloop("Crypt shell " + VERSION)
+            cshell.cmdloop(f"Crypt shell {VERSION}")
 
     except IOError as io_ex:
         print(f"File access error: {io_ex}")
@@ -371,9 +471,8 @@ def runner(db="crypt.db"):
         sys.exit(1)
     except Exception as ex:
         print(f"Error: {ex}")
-        # import traceback
-        # traceback.print_exc()
         sys.exit(1)
+
 
 if __name__ == '__main__':
     run(runner)
