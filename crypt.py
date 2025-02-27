@@ -31,17 +31,22 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from clize import run
 
-VERSION = "crypt v0.5"
+VERSION = "crypt v0.6"
 SALT_LEN = 16
+LEGACY_ITERATIONS = 100000  # Original iteration count
+DEFAULT_ITERATIONS = 310000  # OWASP recommended minimum
 
 
-def _gen_key(password: str, salt: bytes = None) -> Tuple[bytes, bytes]:
+def _gen_key(
+    password: str, salt: bytes = None, iterations: int = DEFAULT_ITERATIONS
+) -> Tuple[bytes, bytes]:
     """
     Generate a key from a password and salt using PBKDF2.
 
     Args:
         password: The password to derive the key from
         salt: Optional salt bytes. If None, generates random salt.
+        iterations: Number of PBKDF2 iterations to use for key derivation
 
     Returns:
         Tuple of (key, salt) where key is the derived key and salt is the salt used
@@ -49,16 +54,23 @@ def _gen_key(password: str, salt: bytes = None) -> Tuple[bytes, bytes]:
     if salt is None:
         salt = os.urandom(SALT_LEN)
 
-    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(),
-                     length=32,
-                     salt=salt,
-                     iterations=100000,
-                     backend=default_backend())
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=iterations,
+        backend=default_backend(),
+    )
     key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
     return key, salt
 
 
-def _write_db(password: str, db_dict: Dict[str, Any], filename: str) -> None:
+def _write_db(
+    password: str,
+    db_dict: Dict[str, Any],
+    filename: str,
+    iterations: int = DEFAULT_ITERATIONS,
+) -> None:
     """
     Write an encrypted database to a file.
 
@@ -66,11 +78,15 @@ def _write_db(password: str, db_dict: Dict[str, Any], filename: str) -> None:
         password: The password to encrypt the database with
         db_dict: The database dictionary to encrypt
         filename: The file to write the encrypted database to
+        iterations: Number of PBKDF2 iterations to use for key derivation
 
     Raises:
         IOError: If the file cannot be written to
     """
-    key, salt = _gen_key(password)
+    key, salt = _gen_key(password, iterations=iterations)
+
+    # Store the iterations used for this database file
+    db_dict["iterations"] = iterations
 
     ts = datetime.datetime.now()
     db_dict["modified"] = str(ts)
@@ -94,13 +110,16 @@ def _write_db(password: str, db_dict: Dict[str, Any], filename: str) -> None:
             raise IOError(f"Cannot write to {filename}. File is locked by another process.")
 
 
-def _load_db(password: str, filename: str) -> Dict[str, Any]:
+def _load_db(
+    password: str, filename: str, iterations: int = LEGACY_ITERATIONS
+) -> Dict[str, Any]:
     """
     Load and decrypt a database from a file.
 
     Args:
         password: The password to decrypt the database with
         filename: The file to read the encrypted database from
+        iterations: Number of PBKDF2 iterations to use for key derivation
 
     Returns:
         The decrypted database dictionary
@@ -123,8 +142,8 @@ def _load_db(password: str, filename: str) -> Dict[str, Any]:
         except IOError:
             raise IOError(f"Cannot read from {filename}. File is locked by another process.")
 
-        # compute key
-        key, salt = _gen_key(password, salt)
+        # compute key with specified iterations
+        key, salt = _gen_key(password, salt, iterations)
         fernet = Fernet(key)
 
         try:
@@ -149,12 +168,13 @@ class CryptShell(Cmd):
         self.password: Optional[str] = None
         self.db_dict: Optional[Dict[str, Any]] = None
 
-    def do_open(self, args: str) -> Optional[bool]:
+    def do_open(self, args: str, iterations: int = LEGACY_ITERATIONS) -> Optional[bool]:
         """
         Open a db, load everything in memory.
 
         Args:
             args: The db filename as a string
+            iterations: Number of PBKDF2 iterations to use for key derivation
 
         Returns:
             None on success, False on failure
@@ -170,18 +190,22 @@ class CryptShell(Cmd):
 
             if not os.path.exists(self.db_filename):
                 print(f"Database file {self.db_filename} does not exist.")
-                if self.do_create(args_list) is False:
+                if self.do_create(args_list, iterations=DEFAULT_ITERATIONS) is False:
                     return False
 
             print(f"Opening database {self.db_filename}")
             filename = self.db_filename
             password = getpass.getpass("Password: ")
-            db_dict = _load_db(password, filename)
+            db_dict = _load_db(password, filename, iterations)
+
+            # Store the iterations used
+            stored_iterations = db_dict.get("iterations", LEGACY_ITERATIONS)
             print(
                 f"Opened db file {filename}, DB version string is \"{db_dict.get('version', 'N/A')}\""
             )
             print(f"Created on {db_dict.get('created', 'N/A')}")
             print(f"Modified on {db_dict.get('modified', 'N/A')}")
+            print(f"Using {stored_iterations} iterations for key derivation")
 
             self.db_dict = db_dict
             self.password = password
@@ -305,6 +329,54 @@ class CryptShell(Cmd):
         print(f"Updated key \"{key}\" to db \"{self.db_filename}\"")
         return None
 
+    def do_upgrade(self, args: str) -> Optional[bool]:
+        """
+        Upgrade the database to use more secure encryption settings.
+
+        Args:
+            args: Optional target iterations number, defaults to DEFAULT_ITERATIONS
+
+        Returns:
+            None on success, False on failure
+        """
+        if self.db_dict is None or self.password is None or self.db_filename is None:
+            print("No database loaded. Use 'open' first.")
+            return False
+
+        args_list = shlex.split(args) if args else []
+        target_iterations = DEFAULT_ITERATIONS
+
+        if args_list:
+            try:
+                target_iterations = int(args_list[0])
+                if target_iterations <= 0:
+                    print("Iterations must be a positive integer.")
+                    return False
+            except ValueError:
+                print(f"Invalid iterations value: '{args_list[0]}'")
+                return False
+
+        current_iterations = self.db_dict.get("iterations", LEGACY_ITERATIONS)
+
+        if current_iterations >= target_iterations:
+            print(
+                f"Database already using {current_iterations} iterations (requested: {target_iterations})."
+            )
+            print("No upgrade needed.")
+            return None
+
+        print(
+            f"Upgrading database from {current_iterations} to {target_iterations} iterations..."
+        )
+
+        # Write the database with new iterations
+        _write_db(self.password, self.db_dict, self.db_filename, target_iterations)
+
+        print(
+            f"Database upgraded successfully. Now using {target_iterations} iterations."
+        )
+        return None
+
     def do_password(self, args):
         """
         Change the password of the loaded database
@@ -331,15 +403,26 @@ class CryptShell(Cmd):
         print("Password changed.")
         return None
 
-    def do_create(self, args):
+    def do_create(self, args, iterations: int = DEFAULT_ITERATIONS):
         """
         Create a new database. It will prompt for new password.
         The current db loaded is discarded. The file of the current db is not altered.
 
-        :param filename: The filename for the new db
+        Args:
+            args: The filename for the new db
+            iterations: Number of PBKDF2 iterations to use for key derivation
+
+        Returns:
+            None on success, False on failure
         """
-        if type(args) is str:
-            args = shlex.split(args)
+        if isinstance(args, str):
+            args_list = shlex.split(args)
+            if not args_list:
+                print("Error: Missing database filename")
+                return False
+            self.db_filename = args_list[0]
+        else:
+            # Handle case when args is already a list
             self.db_filename = args[0]
 
         if os.path.exists(self.db_filename):
@@ -359,10 +442,11 @@ class CryptShell(Cmd):
         self.db_dict = {
             "created": str(ts),
             "version": VERSION,
+            "iterations": iterations,
         }
 
-        print(f"Creating new db file {self.db_filename}")
-        _write_db(self.password, self.db_dict, self.db_filename)
+        print(f"Creating new db file {self.db_filename} with {iterations} iterations")
+        _write_db(self.password, self.db_dict, self.db_filename, iterations)
         return None
 
     def do_delete(self, args):
@@ -443,12 +527,14 @@ class CryptShell(Cmd):
             print("Bad command. Type \"?\" for help.")
 
 
-def runner(db: str = "crypt.db") -> None:
+def runner(db: str = "crypt.db", iterations: int = None) -> None:
     """
     Create, view and maintain an encrypted db of key=value(s) pairs.
 
     Args:
         db: Database file path
+        iterations: Number of PBKDF2 iterations to use for key derivation
+                   If None, uses DEFAULT_ITERATIONS
 
     Returns:
         None
@@ -458,9 +544,14 @@ def runner(db: str = "crypt.db") -> None:
     """
     cshell = CryptShell()
 
+    # Use provided iterations value or the legacy value for compatibility
+    load_iterations = iterations if iterations is not None else DEFAULT_ITERATIONS
+
     try:
-        res = cshell.do_open(db)
-        if res is not False: # db opened succesfully
+        # Pass the iterations parameter to do_open
+        res = cshell.do_open(db, iterations=load_iterations)
+
+        if res is not False:  # db opened succesfully
             cshell.cmdloop(f"Crypt shell {VERSION}")
 
     except IOError as io_ex:
