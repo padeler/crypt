@@ -17,6 +17,8 @@ import os
 import string
 import random
 import sys
+import fcntl
+import subprocess
 
 from cmd import Cmd
 import shlex
@@ -28,7 +30,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from clize import run
 
-VERSION = "crypt v0.3"
+VERSION = "crypt v0.4"
 SALT_LEN = 16
 
 def _gen_key(password, salt=os.urandom(SALT_LEN)):
@@ -57,17 +59,31 @@ def _write_db(password, db_dict, filename):
     db_crypt = fernet.encrypt(db_json.encode())
 
     with open(filename, "wb") as f:
-        f.write(salt)
-        f.write(db_crypt)
+        # Acquire an exclusive lock before writing
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            f.write(salt)
+            f.write(db_crypt)
+            # Release the lock when done
+            fcntl.flock(f, fcntl.LOCK_UN)
+        except IOError:
+            raise IOError(f"Cannot write to {filename}. File is locked by another process.")
 
 
 def _load_db(password, filename):
     with open(filename, "rb") as f:
-        salt = f.read(SALT_LEN)  # read salt
-        if len(salt) != SALT_LEN:
-            raise IOError("Corrupted/invalid db file. Failed to read salt")
+        # Acquire a shared lock for reading
+        try:
+            fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            salt = f.read(SALT_LEN)  # read salt
+            if len(salt) != SALT_LEN:
+                raise IOError("Corrupted/invalid db file. Failed to read salt")
 
-        db_crypt = f.read()  # read full db
+            db_crypt = f.read()  # read full db
+            # Release the lock when done reading
+            fcntl.flock(f, fcntl.LOCK_UN)
+        except IOError:
+            raise IOError(f"Cannot read from {filename}. File is locked by another process.")
 
         # compute key
         key, salt = _gen_key(password, salt)
@@ -204,6 +220,7 @@ class CryptShell(Cmd):
         oldpassword = getpass.getpass("Enter old password: ")
         if oldpassword != self.password:
             print("Wrong password. Aborting.")
+            return False
 
         password = getpass.getpass("Enter new password: ")
         password2 = getpass.getpass("Re-enter password: ")
@@ -215,6 +232,7 @@ class CryptShell(Cmd):
         self.password = password
         _write_db(self.password, self.db_dict, self.db_filename)
         print("Password changed.")
+        return None
 
     def do_create(self, args):
         """
@@ -297,7 +315,10 @@ class CryptShell(Cmd):
         """
         Clear screen
         """
-        os.system('cls' if os.name == 'nt' else 'clear')
+        if os.name == 'nt':
+            subprocess.run(['cls'], shell=True, check=False)
+        else:
+            subprocess.run(['clear'], check=False)
 
     def _complete_key(self, text, line, beginidx, endidx):
         res = []
@@ -342,6 +363,12 @@ def runner(db="crypt.db"):
         if res is not False: # db opened succesfully
             cshell.cmdloop("Crypt shell " + VERSION)
 
+    except IOError as io_ex:
+        print(f"File access error: {io_ex}")
+        sys.exit(1)
+    except ValueError as val_ex:
+        print(f"Value error: {val_ex}")
+        sys.exit(1)
     except Exception as ex:
         print(f"Error: {ex}")
         # import traceback
